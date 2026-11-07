@@ -21,9 +21,7 @@ Future<void> main() async {
 
   // 2. Inicializar Mapbox
   // Recuerda ejecutar con --dart-define=ACCESS_TOKEN=pk...
-  MapboxOptions.setAccessToken(
-    const String.fromEnvironment('ACCESS_TOKEN'),
-  );
+  MapboxOptions.setAccessToken('pk.eyJ1IjoiZHJpdmVydmFuIiwiYSI6ImNtdnkzMXQ1NzAybWgyenExMzJwdGt5b24ifQ.NuSOApFFI5z3hPYkoj4GpA');
 
   // 3. Arrancar la app
   runApp(

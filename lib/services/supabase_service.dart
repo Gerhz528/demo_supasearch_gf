@@ -1,6 +1,7 @@
 // lib/services/supabase_service.dart
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../models/usuario.dart';
+import 'dart:io';
 
 class SupabaseService {
   // Instancia del cliente de Supabase
@@ -66,9 +67,16 @@ class SupabaseService {
       // 1. Actualizar el nombre en la tabla perfiles
       await _client.from('perfiles').update({'nombre': nombre}).eq('id', usuarioId);
 
-      // 2. Si enviaron nombre de negocio, actualizarlo en la tabla emprendedores
+      // 2. Si enviaron nombre de negocio, actualizarlo en emprendedores Y en lugares
       if (nombreNegocio != null) {
+        // Actualizamos el nombre del negocio
         await _client.from('emprendedores').update({'nombre_negocio': nombreNegocio}).eq('usuario_id', usuarioId);
+
+        // 👇 Buscamos el ID del emprendedor para actualizar sus lugares
+        final emp = await _client.from('emprendedores').select('id').eq('usuario_id', usuarioId).single();
+
+        // Actualizamos el nombre en la tabla 'lugares' para que el mapa lo refleje
+        await _client.from('lugares').update({'nombre': nombreNegocio}).eq('emprendedor_id', emp['id']);
       }
     } catch (e) {
       throw Exception('Error al actualizar perfil: $e');
@@ -112,6 +120,53 @@ class SupabaseService {
         'longitud': longitud,
       }).eq('id', lugares[0]['id']);
     }
+  }
+
+  //Subir imagen al bucket de imagenes
+  Future<String?> subirImagen(File imagen) async {
+    try {
+      // Generamos un nombre único usando la fecha actual
+      final fileName = 'producto_${DateTime.now().millisecondsSinceEpoch}.jpg';
+
+      // Subimos el archivo
+      await _client.storage.from('Images').upload(fileName, imagen);
+
+      // Obtenemos la URL pública
+      return _client.storage.from('Images').getPublicUrl(fileName);
+    } catch (e) {
+      print('Error subiendo imagen: $e');
+      return null;
+    }
+  }
+
+  // Crear un producto para el emprendedor logueado
+  Future<void> crearProducto({
+    required String emprendedorId,
+    required String nombre,
+    required double precio,
+    String? descripcion,
+    String? imagenUrl,
+  }) async {
+    await _client.from('productos').insert({
+      'emprendedor_id': emprendedorId,
+      'nombre': nombre,
+      'precio': precio,
+      'descripcion': descripcion,
+      'imagen_url': imagenUrl,
+    });
+  }
+
+  Future<List<Map<String, dynamic>>> obtenerProductos(String emprendedorId) async {
+    final response = await _client
+        .from('productos')
+        .select()
+        .eq('emprendedor_id', emprendedorId);
+    return List<Map<String, dynamic>>.from(response);
+  }
+
+  // Borrar un producto
+  Future<void> borrarProducto(String productoId) async {
+    await _client.from('productos').delete().eq('id', productoId);
   }
 
 }

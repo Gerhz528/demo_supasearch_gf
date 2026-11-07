@@ -3,10 +3,17 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:mapbox_maps_flutter/mapbox_maps_flutter.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import '../../models/lugar.dart';
 import '../../services/location_service.dart';
 import '../../viewModel/auth_viewmodel.dart';
 import '../../viewModel/perfil_viewmodel.dart';
 import '../../viewModel/lugares_viewmodel.dart';
+import '../../viewModel/productos_viewmodel.dart';
+import 'crear_producto_screen.dart';
+import 'dart:typed_data';
+import 'dart:ui' as ui;
+import '../../services/location_service.dart';
+import 'crear_producto_screen.dart';
 
 
 class MainScreen extends ConsumerStatefulWidget {
@@ -20,147 +27,221 @@ class _MainScreenState extends ConsumerState<MainScreen> {
   int _selectedIndex = 0;
   MapboxMap? mapboxMap;
 
-  // 1. DECLARACIÓN DE LA VARIABLE (Faltaba esto)
-  PointAnnotationManager? _annotationManager;
+  // Usamos CircleAnnotationManager para los pines rojos
+  CircleAnnotationManager? _circleAnnotationManager;
 
-  // 2. MÉTODO PARA PINTAR LOS LUGARES (Faltaba esto)
   void _pintarLugares() async {
-    if (_annotationManager == null) return;
+    if (_circleAnnotationManager == null) return;
 
-    // Leemos los datos del provider
     final lugaresAsync = ref.read(lugaresProvider);
 
     lugaresAsync.whenData((lugares) async {
-      // Borramos los pines anteriores
-      await _annotationManager?.deleteAll();
+      print("📍 Lugares encontrados para pintar: ${lugares.length}");
 
-      // Recorremos los lugares y creamos un pin por cada uno
+      await _circleAnnotationManager?.deleteAll();
+
       for (var lugar in lugares) {
-        await _annotationManager?.create(
-          PointAnnotationOptions(
-            geometry: Point(
-              coordinates: Position(lugar.longitud, lugar.latitud), // Longitud primero
-            ),
+        await _circleAnnotationManager?.create(
+          CircleAnnotationOptions(
+            geometry: Point(coordinates: Position(lugar.longitud, lugar.latitud)),
+            circleColor: Colors.red.value,
+            circleRadius: 10.0,
+            circleStrokeColor: Colors.white.value,
+            circleStrokeWidth: 2.0,
+            customData: {'lugarId': lugar.id},
           ),
         );
       }
-      print("✅ Se pintaron ${lugares.length} lugares en el mapa.");
     });
   }
 
-  // 3. CREACIÓN DEL MAPA Y GPS
   void _onMapCreated(MapboxMap mapboxMap) async {
     this.mapboxMap = mapboxMap;
 
-    // Activar el "punto azul" de Mapbox
+    // 1. Primero pedimos la ubicación (esto fuerza a que salte la ventana de permisos si no se ha dado)
+    final position = await LocationService().obtenerUbicacionActual();
+
+    // 2. Esperamos a que el perfil cargue por completo usando '.future'
+    final perfilData = await ref.read(perfilProvider.future);
+    final esEmprendedor = perfilData?['negocio'] != null;
+
+    // 3. Encendemos el punto azul con la seguridad de que ya sabemos el rol
     await mapboxMap.location.updateSettings(
       LocationComponentSettings(
-        enabled: true,
+        enabled: esEmprendedor, // Solo el emprendedor lo verá
         pulsingEnabled: true,
       ),
     );
 
-    // Obtener ubicación del usuario
-    final locationService = LocationService();
-    final position = await locationService.obtenerUbicacionActual();
+    // 4. Centramos la cámara en la ubicación obtenida
+    mapboxMap.setCamera(
+      CameraOptions(
+        center: Point(coordinates: Position(position?.longitude ?? -89.2182, position?.latitude ?? 13.6929)),
+        zoom: 15.0,
+      ),
+    );
 
-    if (position != null) {
-      mapboxMap.setCamera(
-        CameraOptions(
-          center: Point(coordinates: Position(position.longitude, position.latitude)),
-          zoom: 15.0,
-        ),
-      );
-    } else {
-      // Si falla el GPS, centrar en San Salvador
-      mapboxMap.setCamera(
-        CameraOptions(
-          center: Point(coordinates: Position(-89.2182, 13.6929)),
-          zoom: 12.0,
-        ),
-      );
-    }
+    _circleAnnotationManager = await mapboxMap.annotations.createCircleAnnotationManager();
 
-    // Inicializar el administrador de pines
-    _annotationManager = await mapboxMap.annotations.createPointAnnotationManager();
+    _circleAnnotationManager?.tapEvents(
+      onTap: (CircleAnnotation annotation) {
+        final lugarId = annotation.customData?['lugarId'] as String?;
+        if (lugarId != null) {
+          final lugares = ref.read(lugaresProvider).value ?? [];
+          final lugarSeleccionado = lugares.firstWhere((l) => l.id == lugarId);
+          _mostrarInfoLugar(lugarSeleccionado);
+        }
+      },
+    );
 
-    // Pintar los lugares
     _pintarLugares();
+  }
+
+  void _mostrarInfoLugar(Lugar lugar) {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true, // 👈 Permite que la ventana crezca si hay muchos productos
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      builder: (context) {
+        // 👇 Envolvemos todo en SafeArea
+        return SafeArea(
+          child: FutureBuilder<List<Map<String, dynamic>>>(
+            future: ref.read(supabaseServiceProvider).obtenerProductos(lugar.emprendedorId),
+            builder: (context, snapshot) {
+              return Padding(
+                padding: const EdgeInsets.all(20.0),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    // Un pequeño indicador visual de que se puede arrastrar
+                    Center(
+                      child: Container(
+                        width: 40,
+                        height: 4,
+                        decoration: BoxDecoration(
+                          color: Colors.grey[300],
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+
+                    Text(lugar.nombre, style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
+                    const SizedBox(height: 8),
+                    Row(
+                      children: [
+                        const Icon(Icons.location_on, color: Colors.grey, size: 16),
+                        const SizedBox(width: 4),
+                        Text(lugar.direccion ?? 'Ubicación actual', style: const TextStyle(color: Colors.grey)),
+                      ],
+                    ),
+                    const Divider(height: 30),
+                    const Text('Productos que ofrece:', style: TextStyle(fontWeight: FontWeight.bold)),
+                    const SizedBox(height: 10),
+
+                    // Hacemos que la lista de productos sea scrolleable si hay muchos
+                    Flexible(
+                      child: snapshot.connectionState == ConnectionState.waiting
+                          ? const Center(child: CircularProgressIndicator())
+                          : (!snapshot.hasData || snapshot.data!.isEmpty)
+                          ? const Text('No hay productos aún.')
+                          : ListView.builder(
+                        shrinkWrap: true,
+                        itemCount: snapshot.data!.length,
+                        itemBuilder: (context, index) {
+                          final prod = snapshot.data![index];
+                          return ListTile(
+                            contentPadding: EdgeInsets.zero,
+                            leading: prod['imagen_url'] != null
+                                ? ClipRRect(
+                              borderRadius: BorderRadius.circular(8),
+                              child: Image.network(
+                                prod['imagen_url'],
+                                width: 50,
+                                height: 50,
+                                fit: BoxFit.cover,
+                                errorBuilder: (context, error, stackTrace) => const Icon(Icons.broken_image, color: Colors.grey),
+                              ),
+                            )
+                                : const Icon(Icons.shopping_bag, color: Colors.blue),
+                            title: Text(prod['nombre']),
+                            subtitle: Text(prod['descripcion'] ?? ''),
+                            trailing: Text('\$${prod['precio']}', style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.green)),
+                          );
+                        },
+                      ),
+                    ),
+                  ],
+                ),
+              );
+            },
+          ),
+        );
+      },
+    );
   }
 
   @override
   Widget build(BuildContext context) {
     final perfilAsync = ref.watch(perfilProvider);
-    // Verificamos si es emprendedor (asumiendo que data['negocio'] no es nulo)
-    final esEmprendedor = perfilAsync.value?['negocio'] != null;
+    final bool esEmprendedor = perfilAsync.value?['negocio'] != null;
+    final String? emprendedorId = esEmprendedor ? perfilAsync.value!['negocio']['id'] : null;
 
-    // Escuchamos si los lugares cambian en la BD para volver a pintarlos
+    // Escuchamos cambios en la base de datos
     ref.listen(lugaresProvider, (previous, next) {
       if (next.hasValue) {
         _pintarLugares();
       }
     });
 
+    final List<Widget> pantallas = [
+      MapWidget(key: const ValueKey("mapWidget"), styleUri: MapboxStyles.MAPBOX_STREETS, onMapCreated: _onMapCreated),
+      if (esEmprendedor) _ProductosTab(emprendedorId: emprendedorId!),
+      const Center(child: Text('Chat en construcción...')),
+      _ConfiguracionTab(perfilAsync: perfilAsync),
+    ];
+
+    final List<NavigationDestination> destinos = [
+      const NavigationDestination(icon: Icon(Icons.map), label: 'Mapa'),
+      if (esEmprendedor) const NavigationDestination(icon: Icon(Icons.store), label: 'Productos'),
+      const NavigationDestination(icon: Icon(Icons.chat), label: 'Chat'),
+      const NavigationDestination(icon: Icon(Icons.settings), label: 'Ajustes'),
+    ];
+
+    if (_selectedIndex >= pantallas.length) _selectedIndex = 0;
+
     return Scaffold(
       appBar: AppBar(
         title: perfilAsync.when(
           loading: () => const Text('Cargando...'),
-          error: (err, stack) => Text('Error: $err', style: const TextStyle(fontSize: 12)),
+          error: (err, stack) => const Text('Error'),
           data: (data) {
-            if (data == null || data['perfil'] == null) {
-              return const Text('Usuario sin perfil');
-            }
-            final perfil = data['perfil'];
-            final negocio = data['negocio'];
-
+            if (data == null || data['perfil'] == null) return const Text('App');
             return Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(perfil['nombre'] ?? 'Usuario', style: const TextStyle(fontSize: 18)),
-                if (negocio != null)
-                  Text(
-                    negocio['nombre_negocio'] ?? 'Mi Negocio',
-                    style: const TextStyle(fontSize: 12, color: Colors.white70),
-                  ),
+                Text(data['perfil']['nombre'] ?? 'Usuario', style: const TextStyle(fontSize: 18)),
+                if (data['negocio'] != null)
+                  Text(data['negocio']['nombre_negocio'] ?? 'Emprendedor', style: const TextStyle(fontSize: 12, color: Colors.white70)),
               ],
             );
           },
         ),
       ),
 
-      body: IndexedStack(
-        index: _selectedIndex,
-        children: [
-          // Pestaña 0: Mapa
-          MapWidget(
-            key: const ValueKey("mapWidget"),
-            styleUri: MapboxStyles.MAPBOX_STREETS,
-            onMapCreated: _onMapCreated,
-          ),
-          // Pestaña 1: Chat
-          const Center(
-            child: Text('El Chat estará aquí pronto', style: TextStyle(fontSize: 18)),
-          ),
-          // Pestaña 2: Ajustes
-          _ConfiguracionTab(perfilAsync: perfilAsync),
-        ],
-      ),
+      body: IndexedStack(index: _selectedIndex, children: pantallas),
 
-      //PARA MOSTRAR EL BOTÓN DE ACTUALIZACIÓN DE UBICACIÓN
       floatingActionButton: (_selectedIndex == 0 && esEmprendedor)
           ? FloatingActionButton.extended(
         onPressed: () async {
-          // 1. Mostramos un indicador de carga
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(content: Text('Obteniendo tu ubicación GPS...')),
           );
 
-          // 2. Obtenemos el GPS
-          final locationService = LocationService();
-          final position = await locationService.obtenerUbicacionActual();
+          final position = await LocationService().obtenerUbicacionActual();
 
           if (position != null) {
-            // 3. Actualizamos en Supabase
             final negocioNombre = perfilAsync.value!['negocio']['nombre_negocio'] ?? 'Mi Puesto';
             final user = Supabase.instance.client.auth.currentUser;
 
@@ -171,7 +252,6 @@ class _MainScreenState extends ConsumerState<MainScreen> {
               longitud: position.longitude,
             );
 
-            // 4. Refrescamos los datos del mapa (¡El pin se moverá!)
             ref.invalidate(lugaresProvider);
 
             if (context.mounted) {
@@ -188,27 +268,95 @@ class _MainScreenState extends ConsumerState<MainScreen> {
           }
         },
         icon: const Icon(Icons.my_location),
-        label: const Text('Actualizar mi ubicación'),
+        label: const Text('Actualizar ubicación'),
       )
-          : null, // Si no es emprendedor o no está en la pestaña del mapa, el botón se oculta
-
+          : null,
 
       bottomNavigationBar: NavigationBar(
         selectedIndex: _selectedIndex,
-        onDestinationSelected: (int index) {
-          setState(() => _selectedIndex = index);
-        },
-        destinations: const [
-          NavigationDestination(icon: Icon(Icons.map), label: 'Mapa'),
-          NavigationDestination(icon: Icon(Icons.chat), label: 'Chat'),
-          NavigationDestination(icon: Icon(Icons.settings), label: 'Ajustes'),
-        ],
+        onDestinationSelected: (index) => setState(() => _selectedIndex = index),
+        destinations: destinos,
       ),
     );
   }
 }
 
-// --- WIDGET PARA LA PESTAÑA DE CONFIGURACIÓN ---
+// ==========================================
+// PESTAÑA DE PRODUCTOS (Solo Emprendedores)
+// ==========================================
+class _ProductosTab extends ConsumerWidget {
+  final String emprendedorId;
+  const _ProductosTab({required this.emprendedorId});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final productosAsync = ref.watch(productosEmprendedorProvider(emprendedorId));
+
+    return Scaffold(
+      body: Padding(
+        padding: const EdgeInsets.all(16.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            ElevatedButton.icon(
+              icon: const Icon(Icons.add_a_photo),
+              label: const Text('Tomar foto y agregar producto'),
+              style: ElevatedButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 16)),
+              onPressed: () async {
+                final result = await Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (context) => CrearProductoScreen(emprendedorId: emprendedorId)),
+                );
+                if (result == true) {
+                  ref.invalidate(productosEmprendedorProvider(emprendedorId));
+                }
+              },
+            ),
+            const SizedBox(height: 20),
+            const Text('Mis Productos', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+            const SizedBox(height: 10),
+
+            Expanded(
+              child: productosAsync.when(
+                loading: () => const Center(child: CircularProgressIndicator()),
+                error: (err, stack) => Center(child: Text('Error: $err')),
+                data: (productos) {
+                  if (productos.isEmpty) return const Center(child: Text('Aún no tienes productos.'));
+                  return ListView.builder(
+                    itemCount: productos.length,
+                    itemBuilder: (context, index) {
+                      final prod = productos[index];
+                      return Card(
+                        child: ListTile(
+                          leading: prod['imagen_url'] != null
+                              ? ClipRRect(borderRadius: BorderRadius.circular(8), child: Image.network(prod['imagen_url'], width: 50, height: 50, fit: BoxFit.cover))
+                              : const Icon(Icons.image_not_supported),
+                          title: Text(prod['nombre']),
+                          subtitle: Text('\$${prod['precio']}'),
+                          trailing: IconButton(
+                            icon: const Icon(Icons.delete, color: Colors.red),
+                            onPressed: () async {
+                              await ref.read(supabaseServiceProvider).borrarProducto(prod['id']);
+                              ref.invalidate(productosEmprendedorProvider(emprendedorId));
+                            },
+                          ),
+                        ),
+                      );
+                    },
+                  );
+                },
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ==========================================
+// PESTAÑA DE CONFIGURACIÓN (Ajustes)
+// ==========================================
 class _ConfiguracionTab extends ConsumerStatefulWidget {
   final AsyncValue<Map<String, dynamic>?> perfilAsync;
   const _ConfiguracionTab({required this.perfilAsync});
@@ -238,52 +386,30 @@ class _ConfiguracionTabState extends ConsumerState<_ConfiguracionTab> {
 
   @override
   Widget build(BuildContext context) {
-    if (widget.perfilAsync.isLoading) {
-      return const Center(child: CircularProgressIndicator());
-    }
-
-    if (widget.perfilAsync.hasError) {
-      return Center(child: Text('Error al cargar ajustes: ${widget.perfilAsync.error}'));
-    }
-
+    if (widget.perfilAsync.isLoading) return const Center(child: CircularProgressIndicator());
     final data = widget.perfilAsync.value;
-
-    if (data == null || data['perfil'] == null) {
-      return const Center(child: Text('No se encontraron datos del perfil.'));
-    }
+    if (data == null || data['perfil'] == null) return const Center(child: Text('Sin datos'));
 
     final perfil = data['perfil'];
     final bool esEmprendedor = data['negocio'] != null;
     final user = Supabase.instance.client.auth.currentUser;
 
-    // Llenamos los controladores si están vacíos
     if (_nombreController.text.isEmpty) _nombreController.text = perfil['nombre'] ?? '';
-    if (esEmprendedor && _negocioController.text.isEmpty) {
-      _negocioController.text = data['negocio']['nombre_negocio'] ?? '';
-    }
+    if (esEmprendedor && _negocioController.text.isEmpty) _negocioController.text = data['negocio']['nombre_negocio'] ?? '';
 
-    return Padding(
+    return SingleChildScrollView(
       padding: const EdgeInsets.all(16.0),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           const Text('Editar Información', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
           const SizedBox(height: 20),
-
-          TextField(
-            controller: _nombreController,
-            decoration: const InputDecoration(labelText: 'Nombre', border: OutlineInputBorder()),
-          ),
+          TextField(controller: _nombreController, decoration: const InputDecoration(labelText: 'Nombre', border: OutlineInputBorder())),
           const SizedBox(height: 12),
-
           if (esEmprendedor) ...[
-            TextField(
-              controller: _negocioController,
-              decoration: const InputDecoration(labelText: 'Nombre del Negocio', border: OutlineInputBorder()),
-            ),
+            TextField(controller: _negocioController, decoration: const InputDecoration(labelText: 'Nombre del Negocio (Opcional)', border: OutlineInputBorder())),
             const SizedBox(height: 12),
           ],
-
           ElevatedButton(
             onPressed: _isLoading ? null : () async {
               setState(() => _isLoading = true);
@@ -294,6 +420,7 @@ class _ConfiguracionTabState extends ConsumerState<_ConfiguracionTab> {
                   nombreNegocio: esEmprendedor ? _negocioController.text.trim() : null,
                 );
                 ref.invalidate(perfilProvider);
+                ref.invalidate(lugaresProvider);
                 ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Perfil actualizado')));
               } catch (e) {
                 ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: $e')));
@@ -303,16 +430,12 @@ class _ConfiguracionTabState extends ConsumerState<_ConfiguracionTab> {
             },
             child: _isLoading ? const CircularProgressIndicator() : const Text('Guardar Cambios'),
           ),
-
-          const Spacer(),
-
+          const SizedBox(height: 40),
           OutlinedButton.icon(
             icon: const Icon(Icons.logout, color: Colors.red),
             label: const Text('Cerrar Sesión', style: TextStyle(color: Colors.red)),
             onPressed: () async {
-              // 1. Cerramos sesión en Supabase
               await ref.read(authViewModelProvider.notifier).logout();
-              // 2. Destruimos la caché de los datos para que el próximo usuario cargue los suyos
               ref.invalidate(perfilProvider);
               ref.invalidate(lugaresProvider);
             },
