@@ -7,22 +7,25 @@ import 'package:mapbox_maps_flutter/mapbox_maps_flutter.dart';
 import 'core/SupaBaseConfig.dart';
 import 'views/screens/auth_screen.dart';
 import 'views/screens/map_screen.dart'; // <-- Importamos el mapa
-import 'viewModel/auth_viewmodel.dart'; // <-- Para escuchar la sesión
+//import 'viewModel/auth_viewmodel.dart'; // <-- Para escuchar la sesión
+import 'views/screens/main_screen.dart'; // <-- Importamos el mapa'
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
+  // 1. Inicializar Supabase
   await Supabase.initialize(
     url: SupabaseConfig.url,
     anonKey: SupabaseConfig.anonKey,
   );
 
-  // Recuerda que debes ejecutar con --dart-define=ACCESS_TOKEN=pk...
-  // o si lo hardcodeaste, déjalo aquí.
+  // 2. Inicializar Mapbox
+  // Recuerda ejecutar con --dart-define=ACCESS_TOKEN=pk...
   MapboxOptions.setAccessToken(
     const String.fromEnvironment('ACCESS_TOKEN'),
   );
 
+  // 3. Arrancar la app
   runApp(
     const ProviderScope(
       child: MyApp(),
@@ -41,7 +44,7 @@ class MyApp extends StatelessWidget {
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.blue),
         useMaterial3: true,
       ),
-      home: const AuthGate(), // <--- Volvemos a usar el portero
+      home: const AuthGate(), // El portero decide qué mostrar
     );
   }
 }
@@ -59,9 +62,11 @@ class AuthGate extends ConsumerWidget {
       error: (error, stack) => Scaffold(body: Center(child: Text('Error: $error'))),
       data: (state) {
         if (state.session != null) {
-          return const MapScreen(); // Si hay sesión, va al mapa
+          // Si hay sesión, va a la pantalla con el mapa y los 3 botones
+          return const MainScreen();
         } else {
-          return const AuthScreen(); // Si no, va al login
+          // Si no hay sesión, va al login
+          return const AuthScreen();
         }
       },
     );

@@ -91,7 +91,7 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
               if (_rolSeleccionado == 'emprendedor')
                 TextField(
                   controller: _negocioController,
-                  decoration: const InputDecoration(labelText: 'Nombre de tu negocio'),
+                  decoration: const InputDecoration(labelText: 'Nombre de tu negocio (opcional)'),
                 ),
               const SizedBox(height: 12),
             ],
