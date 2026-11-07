@@ -2,15 +2,15 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../models/lugar.dart'; // Asegúrate de que este modelo exista
+import '../repositories/lugares_repository.dart';
 
-// Este Provider se encarga de buscar los lugares en Supabase
-final lugaresProvider = StreamProvider<List<Lugar>>((ref) {
-  // Escuchamos los cambios en la tabla 'lugares' en tiempo real
-  final stream = Supabase.instance.client
-      .from('lugares')
-      .stream(primaryKey: ['id'])
-      .order('created_at')
-      .map((maps) => maps.map((map) => Lugar.fromJson(map)).toList());
+// 1. Inyectamos el Repository
+final lugaresRepositoryProvider = Provider<LugaresRepository>((ref) {
+  return LugaresRepository();
+});
 
-  return stream;
+// 2. El ViewModel usa el Repository
+final lugaresProvider = FutureProvider<List<Lugar>>((ref) async {
+  final repository = ref.watch(lugaresRepositoryProvider);
+  return await repository.obtenerLugares();
 });
