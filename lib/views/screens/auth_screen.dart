@@ -77,7 +77,7 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
                 decoration: const InputDecoration(labelText: '¿Qué tipo de cuenta eres?'),
                 items: const [
                   DropdownMenuItem(value: 'usuario', child: Text('Cliente')),
-                  DropdownMenuItem(value: 'emprendedor', child: Text('Emprendedor')),
+                  DropdownMenuItem(value: 'emprendedor', child: Text('Vendedor')),
                 ],
                 onChanged: (value) {
                   setState(() {

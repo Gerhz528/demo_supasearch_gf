@@ -169,5 +169,14 @@ class SupabaseService {
     await _client.from('productos').delete().eq('id', productoId);
   }
 
+  Future<Map<String, dynamic>> obtenerUsuarioIdEmprendedor(String emprendedorId) async {
+    final response = await _client
+        .from('emprendedores')
+        .select('usuario_id')
+        .eq('id', emprendedorId)
+        .single();
+    return response;
+  }
+
 }
 

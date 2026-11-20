@@ -9,6 +9,8 @@ import '../../viewModel/auth_viewmodel.dart';
 import '../../viewModel/perfil_viewmodel.dart';
 import '../../viewModel/lugares_viewmodel.dart';
 import '../../viewModel/productos_viewmodel.dart';
+import '../../viewModel/chat_viewmodel.dart';
+import 'chat_screen.dart';
 import 'crear_producto_screen.dart';
 import 'dart:typed_data';
 import 'dart:ui' as ui;
@@ -172,6 +174,56 @@ class _MainScreenState extends ConsumerState<MainScreen> {
                         },
                       ),
                     ),
+                    // Dentro de _mostrarInfoLugar, después de la lista de productos:
+                    //===============================================================
+                    //CONECTAR EL BOTON "CONTACTAR CON EL MAPA"
+                    //
+                    //===============================================================
+                    const Divider(),
+                    ElevatedButton.icon(
+                      icon: const Icon(Icons.message),
+                      label: const Text('Contactar al emprendedor'),
+                      onPressed: () async {
+                        // 1. Mostramos un indicador de carga
+                        showDialog(
+                          context: context,
+                          barrierDismissible: false,
+                          builder: (context) => const Center(child: CircularProgressIndicator()),
+                        );
+
+                        try {
+                          // 2. Buscamos el usuario_id del emprendedor
+                          final emprendedorData = await ref.read(supabaseServiceProvider)
+                              .obtenerUsuarioIdEmprendedor(lugar.emprendedorId);
+
+                          if (context.mounted) {
+                            Navigator.pop(context); // Cerramos el indicador de carga
+                            Navigator.pop(context); // Cerramos el BottomSheet
+
+                            // 3. Abrimos la pantalla del chat
+                            Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                builder: (context) => ChatScreen(
+                                  receptorId: emprendedorData['usuario_id'],
+                                  receptorNombre: lugar.nombre,
+                                ),
+                              ),
+                            );
+                          }
+                        } catch (e) {
+                          if (context.mounted) {
+                            Navigator.pop(context);
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(content: Text('Error al abrir el chat: $e')),
+                            );
+                          }
+                        }
+                      },
+                    ),
+                    //FINAL PARA LO DE CONTACTAR
+
+
                   ],
                 ),
               );
@@ -198,7 +250,7 @@ class _MainScreenState extends ConsumerState<MainScreen> {
     final List<Widget> pantallas = [
       MapWidget(key: const ValueKey("mapWidget"), styleUri: MapboxStyles.MAPBOX_STREETS, onMapCreated: _onMapCreated),
       if (esEmprendedor) _ProductosTab(emprendedorId: emprendedorId!),
-      const Center(child: Text('Chat en construcción...')),
+      const _ChatsTab(),
       _ConfiguracionTab(perfilAsync: perfilAsync),
     ];
 
@@ -277,6 +329,72 @@ class _MainScreenState extends ConsumerState<MainScreen> {
         onDestinationSelected: (index) => setState(() => _selectedIndex = index),
         destinations: destinos,
       ),
+    );
+  }
+}
+
+// ==========================================
+// PESTAÑA DE CHATS (Bandeja de entrada)
+// ==========================================
+class _ChatsTab extends ConsumerWidget {
+  const _ChatsTab();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final bandejaAsync = ref.watch(bandejaEntradaProvider);
+
+    return bandejaAsync.when(
+      loading: () => const Center(child: CircularProgressIndicator()),
+      error: (err, stack) => Center(child: Text('Error: $err')),
+      data: (chats) {
+        if (chats.isEmpty) {
+          return const Center(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(Icons.chat_bubble_outline, size: 60, color: Colors.grey),
+                SizedBox(height: 16),
+                Text('No tienes mensajes aún', style: TextStyle(fontSize: 18, color: Colors.grey)),
+              ],
+            ),
+          );
+        }
+
+        return ListView.builder(
+          itemCount: chats.length,
+          itemBuilder: (context, index) {
+            final chat = chats[index];
+            return ListTile(
+              leading: CircleAvatar(
+                backgroundColor: Colors.blue,
+                child: Text(chat['nombre'][0].toUpperCase(), style: const TextStyle(color: Colors.white)),
+              ),
+              title: Text(chat['nombre'], style: const TextStyle(fontWeight: FontWeight.bold)),
+              subtitle: Text(
+                chat['ultimoMensaje'],
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: () {
+                // Al tocar, abrimos el chat con esa persona
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => ChatScreen(
+                      receptorId: chat['otroId'],
+                      receptorNombre: chat['nombre'],
+                    ),
+                  ),
+                ).then((_) {
+                  // Al volver, refrescamos la lista para ver si hay mensajes nuevos
+                  ref.invalidate(bandejaEntradaProvider);
+                });
+              },
+            );
+          },
+        );
+      },
     );
   }
 }
